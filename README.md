@@ -1,97 +1,41 @@
-# OCR image-only PDF files.
+# PDF-Shrink
 
 ## Introduction
-The purpose of this article is to show how OCR information can be added to scanned, image-only PDFs. The benefit of this approach is that the files can be indexed by standard Adobe/Microsoft iFilters but also the text can be selected using visual tools (Adobe Reader, Chome, Edge, ...)
+Now days the hard-drive storage costs peanuts. However if you are storing files submitted by the user on the server, it can quite quickly add up to hundreds of gigabytes. The traditional suspect is scanned PDFs. Those contain image blobs, sometimes scanned with full color and high resolution. Sometimes, those are generated on the smart-phones with 5-8 megapixel cameras and can take as much as 3 megabytes/page. I was surprised to find though that aside from those, some of the text PDFs can also take megabytes. Apparently a lot of applications that allow to save information into PDF don't think twice about saving actual font glyphes into the PDF. So the scope of the project was:
+- Try to remove font glyphs from the PDF
+- Scale down images
+  
+Due to legacy code I had to support, I used iTextSharp library (https://www.nuget.org/packages/itextsharp) to manipulate PDF. The migration to the latest supported iText (https://itextpdf.com/) should not be a huge problem.
 
-## Background
-I needed to add OCR information to thousands of PDF files (stored actually in the SQL server). I wanted to create a script/utility that could be executed daily to index any new PDF files that don't already contain searchable text.  After searching for a while I found a recipe:
-- Use ghostscript to extract individual pages from PDF to image (JPG) files
-- Use Tesseract to extract OCR from images
-- Store extracted text back to PDF
 
-## Take 1
-Apparently since I touched Tesseract last time in 2009, they added a new feature: the image and the OCR text will be exported as PDF file. I think you need Tesseract version 4+. So the solution seems pretty simple and following batch file emerged within next 20 min (see ocr.bat in the attached project):
+## PDF structure
+The tool that helped me to navigate through the PDF was RUPS (https://itextpdf.com/products/rups). Using this tool you can visualize PDF internal structure. Overall PDF have a list of objects stored under XRef node. The objects of the interest are Stream (can be either Image or Form) and Fonts. Separately there is an Root/Catalog/Pages array. For each page in this array, used resources are references in ./Resources/XObject and/or ./Resources/Font. Those are so-called indirect references to the Fonts and Images from XRef list.
+
+## Fonts
+Surprisingly even Acrobat/PDF Optimizer (older version though) can't properly identify all the space used by the fonts. Some of the space used by fonts, Acrobat attributes to Document Overhead.
+The Font object is a dictionary of font attributes, e.g. BaseFont, Encoding, SubType. Additional information can be stored in the /FontDescriptor and/or /FontDescendants object. The key element here is /FontFile2 attribute that contains a stream of glyphs. This is where most of the space is used. In the symple case of TrueType fonts you can use the method descibed in https://github.com/QuestPDF/QuestPDF/issues/31 - rename a font and remove /FontFile2 attribute. However it only works with simple TrueType fonts without any particular encoding. A lot of apps however do not save a /TrueType font with default encoding, but rather to streamline the storage, they can only store a range of glyphs. E.g. to represent a 'ABC' text, /FontDescriptor element can specify to store /FirstChar=65, /LastChar=67 and instead of storing ASCII values for A,B,C store indexes 0,1,2. In it's own turn it means, that if we are to remove font glyphs specified in the /FontFile2 attribute, we also need to re-incode all the text that uses this font, first using the font decode it and then encode it as plain ASCII.
+The hint on how to deal with it I found in https://stackoverflow.com/questions/49490199/how-to-replace-remove-text-from-a-pdf-file article: the subclass of PdfContentStreamProcessor object recreates page content, checks for each object placed in the stream, and optionally performs text replacements as needed.
+
+After all the text re-incoded as ASCII, the /FontDescriptor object can be converted to standard font without /FontFile2 - font glyphs attribute.
+
+## Images
+The PDF coordinates are defined as 1/72 of an inch. The regular 8" page becomes something like 620 units. Most of the scanned images stored with much higher resolution. I decided internally to try to scale it at the most of the double of referenced width. In case of scanned background image, it becomes double page width. Sometimes though images are imbedded into the PDF - not a background image but rather as small inlined image. In this case I need to go through each page to determine how much space is reserved for the image and scale it down to double of that width. To get that I use the same PdfContentStreamProcessor object with IRenderListener class that saves a max width used by that image in any of the pages it's been referenced.
+After I know how much space (width) the image uses on the page, I can go through each image in the /XFer node and scale it down to the double of the max size it's uses. 
+Aside from scaling images down, the code also re-incodes it as 4 bits/pixel and saved as PNG stream if it's a background scanned image (takes full page) or 24rgb JPG stream if it's smaller in-place image. Also need to be mindfull of the high resolution images especially created with smart phones. Those save background off-white colors. I try to clean off-white background on those as I convert to 4bpp, otherwise a lot of that background gets converted to shades of gray and impede legibility.
+
+### Heuristics
+The current code have some very crude heuristics to check if image should be re-compressed. The original idea was have something like JPG compression quality, but I failed to find a generic solution to get it from all kind of possible image streams. So currently quality of the image is estimated 4.5% of StreamLength/NumberPixels. For the scanned images I encountered this value varies from about 6 for low-resolution monochrome scans to aboot 90 for AppleNotes. For images less then double referenced width and quality is less then 40 (or images less then 4-time width and quality less then 20) - assumption is that the images are compressed enough and no further compression will reduce the size.
+
+## Usage
+Even though application contains main() function, I use it as a class library that compresses stream as it's been submitted from the browser. If you want to try command line utility simply run it as
 ```
-set gs="C:\Program Files\gs\gs9.52\bin\gswin64c.exe"
-set tesseract="C:\Program Files\Tesseract-OCR\tesseract.exe"
-
-if '%1'=='' goto :badParams
-if '%2'=='' goto :badParams
-mkdir %temp%\ocr\
-set nm=%~n1
-SETLOCAL ENABLEDELAYEDEXPANSION 
-
-rem split pdf into multiple jpeg
-%gs% -dSAFER -dBATCH -dNOPAUSE -sDEVICE=jpeg -r300 -dTextAlphaBits=4 -o "%temp%\ocr\ocr_%nm%_%%04d.jpg" -f "%1"
-
-rem ocr each jpeg
-for %%i in (%temp%\ocr\ocr_%nm%_*.jpg) do %tesseract% -l eng "%%i" %%~pni pdf
-del %temp%\ocr\ocr_%nm%_*.jpg
-
-rem combine pdfs
-set ff=#
-for %%i in (%temp%\ocr\ocr_%nm%_*.pdf) do set ff=!ff! %%i
-set ff=%ff:#=%
-%gs% -dNOPAUSE -dQUIET -dBATCH -dNOPAUSE -q -sDEVICE=pdfwrite -o "%2" %ff%
-del %temp%\ocr\ocr_%nm%_*.pdf
-
-goto :eof
-
-:badParams
-echo usage %0 pdf-In pdf-Out
-```
-As you can see the script does following
-- Uses GhostScript to extract individual pages into the %temp%\ocr\####.jpg files
-- For each of the JPG file run Tesseract to create a %temp%\ocr\####.pdf file
-- Use ghost script to combine all PDF files into the output file.
-
-## Take 1 Problems
-Very quickly the problems with solution 1 arose for large PDF files (10+ pages) 
-
-- It was pretty slow. But I figured, since it's running as a background process only for a new files, may be I can live with this.
-- The output file was much, much, much larger then source - like 4 times. Times thousands of files - became a show stopper.
-
-## Take 2 - HOCR2PDF
-Other people have the same problem. Enter HOCR2PDF (https://archive.codeplex.com/?p=hocrtopdf). Apparently Tesseract, aside from outputting OCR as text or PDF, can also output results as HOCR files - effectively encoded HTML files. So the task changes slightly
-
-- Use GhostScript to split PDF files into multiple JPGs
-- Use tesseract to convert JPGs into HOCR files
-- Parse HOCR files
-- Use PDF library (iTextShart) to add text information to the output PDF
-
-## Take 2 - Problems
-Well, HOCR2PDF had similar problems as my original script. It was still slow and files were still pretty large, even though about half the size of solution #1. 
-
-#Take 3 - Final
-So I went ahead and created my own project.
-
-After some troubleshooting, and performance improvements such as enabling compression, using single font for a whole page, I found out that the size bloat boils down to a single iTextShart function call
-```
-stamp.GetImportedPage(stamp.Reader, pg)
-```
-That call alone seems to add about 30K per page. And the only reason it's needed is to get page height. After replacing this call with
-```
-stamp.Reader.GetPageSizeWithRotation(pg).Height
-```
-the size bloat went away, and the output file to my surprise became actually smaller then the source (probably due to enabling compression and removing unsused object).
-
-To address performance problem I decided to run Tesseract for each page concurrently, using ThreadPool. For large (10+ pages) file, the performance boost was drastic. 
-
-## Using the code
-The project contains a class PdfOcr with one public method OcrFile. The usage as below:
-```
-string txt = new PdfOcr().OcrFile(fileIn, fileOut);
+pdfshrink file-in file-out
 ```
 
-This code will OCR the fileIn pdf file, create fileOut and return OCR text. The class might need to be customised by changing/assigning to following static variables:
-- GhostScript - location of GhostScript executable
-- Tesseract - location of Tesseract executable.
-- wdiTemp - folder where temp files will be generated
-- tmpPrfx - prefix for all the temp files
-The class is stored in Program.cs file along with the main program that takes 2 arguments - source and destination file names.                       
-               
+## Results
+The utility able to acheive on average about 60% compression on scanned PDFs and about 90% compression on text PDF.
 
-## Points of Interest
-- https://github.com/UB-Mannheim/tesseract/wiki - TesserAct windows binary 
-- https://www.ghostscript.com/download/gsdnld.html - GhostScript binary download.
-- https://archive.codeplex.com/?p=hocrtopdf - HOCR2PDF .NET utility
+## Problems/TODOs
+- The utility should not be used if you expect a lot of non-ASCII text. Or at least font adjusting functionality should be disabled.
+- Currently the code doesn't recursevely converts text in the imbedded forms. So if there is a text imbedded into the form that uses non-TrueType font, the text will come out garbled
+- The code to clean image background is less then optimized. If somebody can suggest better/faster way of cleaning background - would be great.
