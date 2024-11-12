@@ -374,8 +374,8 @@ namespace PdfShrink {
 				// AppleNotes~90, MicrosoftLens~33, SafeScan~14
 				double qty = oldLen * 4.5 * 100 / (wi.Width * wi.Height);   // width ratio image to page
 				if (wi.Width <= mxw*2 && qty < 40) return false;			// simplest check - image is page width*2
-				if (wi.Width <= mxw*4 && qty < 20) return false;			// any further image size reduction affects legibility...
-
+				if (wi.Width <= mxw*4 && qty < 20) return false;            // any further image size reduction affects legibility...
+				byte[] newBytes = null;
 				if (dict.Get(PdfName.BITSPERCOMPONENT).GetInt() != 1) {
 					if (PdfName.DEVICECMYK.Equals(dict.GetAsName(PdfName.COLORSPACE))) {
 						Utils.Log("Image with CMYK colorspace");
@@ -390,7 +390,8 @@ namespace PdfShrink {
 							//Console.WriteLine("Bad SMASK");
 						};
 					wi = wi.ScaleDown(mxw*2, 0);
-					wi = (mxw >= pgWidth) ?  wi.BgClean() : wi.PixFrmt(PixelFormat.Format24bppRgb);
+					newBytes = (mxw >= pgWidth) ?  wi.BgClean().GetBytes(ImageFormat.Png) 
+								: wi.PixFrmt(PixelFormat.Format24bppRgb).GetBytes(ImageFormat.Jpeg);
 				}
 				else {                                                      // bug in iTextSharp skewes images 
 					/* For following no need to redo image???
@@ -424,8 +425,8 @@ namespace PdfShrink {
 					// scaledown converts 1bpp to full color. Converting back to 1bpp looses resolution. Keep it as 4bpp.
 					if (wi.Width >= mxw*2)
 						wi = wi.ScaleDown(mxw*2, 0).PixFrmt(PixelFormat.Format4bppIndexed);
+					newBytes = wi.GetBytes(ImageFormat.Png);
 				}
-				byte[] newBytes = wi.GetBytes(ImageFormat.Png);
 				if (newBytes == null || newBytes.Length > oldLen * 0.8)
 					return false;
 				var imgZip = iTextSharp.text.Image.GetInstance(newBytes);
