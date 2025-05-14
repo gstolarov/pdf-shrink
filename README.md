@@ -41,8 +41,7 @@ After I know how much space (width) the image uses on the page, I can go through
 Aside from scaling images down, the code also re-incodes it as 4 bits/pixel and saves as PNG stream if it's a background scanned image (takes full page) or 24rgb JPG stream if it's smaller in-place image. Also need to be mindfull of the high resolution images especially created with smart phones. Those save background off-white colors. I try to clean off-white background on those as I convert to 4bpp, otherwise a lot of that background gets converted to shades of gray and impede legibility.
 
 ### Heuristics
-The current code have some very crude heuristics to check if image should be re-compressed. The original idea was to have something like JPG compression quality, but I failed to find a generic solution to get it from all kind of possible image streams. So currently quality of the image is estimated 4.5% of StreamLength/NumberPixels. For the scanned images I encountered, this value varies from about 6 for low-resolution monochrome scans to aboot 90 for AppleNotes. 
-The idea is the larger the image, the lower image quality I can accept. So currently if image 'quality' is less then 40 and image width less then 2 max referred width (or quality under 20 and width less then 4 times max). I don't expect any size reduction and don't even attempt to touch an image. The logic as I mentioned is very crrude and will definitely benefit from more generic approach.
+The current code have some very crude heuristics to check if image should be re-compressed. The original idea was to have something like JPG compression quality, but I failed to find a generic solution to get it from all kind of possible image streams. So currently the code estimate compression ration of the stream lenth over target image area (width * height). If this ratio is below 6.5% - then no compression is neccessary. The fact that source transparent images are split (mask) is not considered. The logic as I mentioned is very crrude and will definitely benefit from more generic approach.
 
 ## Usage
 Even though application contains main() function, I use it as a class library that compresses stream as it's been submitted from the browser. If you want to try command line utility simply run it as
@@ -51,7 +50,7 @@ pdfshrink file-in file-out
 ```
 
 ## Results
-The utility able to acheive on average about 60% compression on scanned PDFs and about 90% compression on text PDF.
+The utility able to acheive on average about 60% compression on scanned PDFs and about 90% compression on text PDF with embedded fonts.
 
 ## Problems/TODOs
 - The utility should not be used if you expect a lot of non-ASCII text. Or at least font adjusting functionality should be disabled.
