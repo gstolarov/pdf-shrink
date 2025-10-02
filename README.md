@@ -1,4 +1,4 @@
-<meta name="google-site-verification" content="POkrDieiMcN7jWQKR9zLfClBT6JVaCMzFRfFDQWwy-Y" />
+<meta name="google-site-verification" content="VkGEZbIgX7ZPSXiBtOSXHzRS6n5vR7ydW3WdnO9S_bI" />
 
 # PDF-Shrink
 
