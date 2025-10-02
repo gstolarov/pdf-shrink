@@ -1,3 +1,5 @@
+<meta name="google-site-verification" content="POkrDieiMcN7jWQKR9zLfClBT6JVaCMzFRfFDQWwy-Y" />
+
 # PDF-Shrink
 
 ## Introduction
