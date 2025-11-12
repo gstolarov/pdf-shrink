@@ -1,4 +1,4 @@
-# [Shrink PDF files with C#/iTextSharp](https://github.com/gstolarov/pdf-shrink) 
+# Shrink PDF files with C#/iTextSharp [GitHub](https://github.com/gstolarov/pdf-shrink) 
 
 ## Introduction
 Now days the hard-drive storage costs peanuts. However if you are storing files submitted by the user on the server, it can quite quickly add up to hundreds of gigabytes. The traditional suspect is scanned PDFs. Those contain image blobs, sometimes scanned with full color and high resolution. Sometimes, those are generated on the smart-phones with 5-8 megapixel cameras and can take as much as 3 megabytes/page. I was surprised to find though that aside from those, some of the text PDFs can also take megabytes. Apparently a lot of applications that allow to save information into PDF don't think twice about saving actual font glyphes into the PDF. So the scope of the project was:
