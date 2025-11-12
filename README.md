@@ -44,6 +44,7 @@ Aside from scaling images down, the code also re-incodes it as 4 bits/pixel and 
 Before trying to load and re-scale the images I want to know if there is a sense in doing so. My original thinking was to make sure I don't try to re-scale with loss of qualiy same JPEG files over and over. However JPEG provides no easy way to find out what is current image quality. So I thought there is 2 rules of thumb:
 - compression ratio - ration of the image length to the image area - the larger this number is the more I can gain from re-scaling/re-compressing images
 - image scale - ration of the image width to the viewport - if image is much larger then the viewport, even nicely compressed images can benefit from re-scaling
+
 Obviously the final heuristics should be a factor (simple multiplication) of both. If the factor is low enough - no point in rescaling. Through multiple tests, I decided factor of those 2 parameters should be below 0.65 - feel free to tweak this number. Also If the original image length is below 1K, I do not try to re-compress/re-scale.
 
 ## Usage
