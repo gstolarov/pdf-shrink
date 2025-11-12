@@ -28,14 +28,20 @@ namespace WebLib {
 				fld = t.GetField(nm, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 			return (T)fld?.GetValue(obj);
 		}
-
-		public static byte[] GetBytes(this Stream s) {
+		public static byte[] GetBytes(this Stream s, bool curPos = false) {
 			byte[] ret;
-			if (s is MemoryStream _tms 
-			&& _tms.Length == (ret = Utils.GetPrivVal<byte[]>(_tms, "_buffer")).Length)
+			if (s is MemoryStream _tms
+			&& (ret = Utils.GetPrivVal<byte[]>(_tms, "_buffer")).Length == _tms.Length)
 				return ret;
 			MemoryStream ms = new MemoryStream();
-			s.CopyTo(ms);
+			if (!curPos && s.CanSeek && s.Position != 0) {
+				long p = s.Position;
+				s.Position = 0;
+				s.CopyTo(ms);
+				s.Position = p;
+			}
+			else
+				s.CopyTo(ms);
 			ms.Position = 0;
 			return ms.ToArray();
 		}

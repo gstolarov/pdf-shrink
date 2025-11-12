@@ -9,6 +9,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.util;
 using System.Windows.Media.Imaging;
 using static iTextSharp.text.pdf.parser.LocationTextExtractionStrategy;
@@ -130,11 +131,11 @@ namespace WebLib {
 				try { mask = Dict2Img(dSMask ?? dMask, false, null); }
 				catch (Exception) { throw; };
 			if (fltrArr.Any(x => x.Equals(PdfName.JPXDECODE))) 
-				wi = new XPdf.XPdfJpx(PdfReader.GetStreamBytesRaw(prs)).decodeImage(pltClrs);
+				wi = new XPdf.XPdfJpx(PdfReader.GetStreamBytesRaw(prs)).DecodeImage(pltClrs);
 			if (fltrArr.Any(x => x.Equals(PdfName.JBIG2DECODE))) {
 				var glob = dict.GetAsDict(PdfName.DECODEPARMS)?.GetAsStream(new PdfName("JBIG2Globals")) as PRStream;
 				wi = new XPdf.PBoxJBig2(PdfReader.GetStreamBytesRaw(prs),
-						 glob == null ? null : PdfReader.GetStreamBytesRaw(glob)).decodeImage();
+						 glob == null ? null : PdfReader.GetStreamBytesRaw(glob)).DecodeImage();
 			}
 			else if (bpc == 1 && fltrArr.Any(x => x.Equals(PdfName.CCITTFAXDECODE)))
 				wi = imgLoadTiff();
@@ -163,6 +164,18 @@ namespace WebLib {
 			}
 			else if (fAlpha && mask == null && dict.Get(PdfName.IMAGEMASK).GetString() == "true")
 				wi = ApplyMask(wi, wi, true);
+			//if (Image.IsAlphaPixelFormat(wi.PixelFormat)) {		// if alpha channel
+			//	Bitmap fm = new Bitmap(wi);							// find transp pixels
+			//	var mb = fm.LockBits(new Rectangle(Point.Empty, wi.Size), ImageLockMode.ReadWrite, PixelFormat.Format32bppRgb);
+			//	var ma = new byte[mb.Height * mb.Stride]; Marshal.Copy(mb.Scan0, ma, 0, ma.Length);
+			//	fm.UnlockBits(mb);
+			//	int i = 3;
+			//	for (; i < ma.Length; i += 4)
+			//		if (ma[i] != 255)
+			//			break;
+			//	if (i >= ma.Length)									// no transp pixels
+			//		wi = ScaleImage(wi, wi.Width, wi.Height, Color.White);	// cvt to 24bit.
+			//}
 			return wi;
 			/////////////////////////////////////////////////////////////////////////////
 			byte[] getPallete() {
@@ -278,8 +291,18 @@ namespace WebLib {
 			}
 			return rsi;
 		}
-
-		class PgRenderListener : IExtRenderListener { //  IRenderListener 
+		public class PdfRenderer : IExtRenderListener {
+			public virtual void RenderText(TextRenderInfo renderInfo) { }
+			public virtual void BeginTextBlock() { }
+			public virtual void ClipPath(int rule) { }
+			public virtual void EndTextBlock() { }
+			public virtual void ModifyPath(PathConstructionRenderInfo renderInfo) { }
+			public virtual void RenderImage(ImageRenderInfo renderInfo) { }
+			public virtual iTextSharp.text.pdf.parser.Path RenderPath(PathPaintingRenderInfo renderInfo) {
+				return null;
+			}
+		}
+		class PgRenderListener : PdfRenderer { //  IRenderListener 
 			internal List<String>	errs = null;
 			internal PdfContentStreamProcessor proc = null;
 			internal Graphics		g;
@@ -291,8 +314,6 @@ namespace WebLib {
 			internal PdfDictionary	res;
 			Dictionary<string,string>	fntMap = new Dictionary<string, string>();
 			iTextSharp.text.pdf.parser.Path path = new iTextSharp.text.pdf.parser.Path();
-			public void BeginTextBlock() { }
-			public void EndTextBlock() { }
 			String MapFont(string nmFnt) {
 				if (fntMap.ContainsKey(nmFnt))
 					return fntMap[nmFnt];
@@ -315,7 +336,7 @@ namespace WebLib {
 				else if (nmFnt.Contains("Impact"))		nm = "Impact";
 				return fntMap[nmFnt] = sf.GetInt().GetString() + "~" + nm;
 			}
-			public void RenderText(TextRenderInfo ri) {
+			public override void RenderText(TextRenderInfo ri) {
 				string txt = ri.GetText();
 				if (!fTxt || ri == null || txt.Trim().Length == 0)
 					return;
@@ -358,7 +379,7 @@ namespace WebLib {
 					Utils.Log(ex);
 				}
 			}
-			public void RenderImage(ImageRenderInfo ri) {
+			public override void RenderImage(ImageRenderInfo ri) {
 				try {
 					var dict = PdfReader.GetPdfObject(ri.GetRef()) as PdfDictionary
 						?? Utils.GetPrivVal<InlineImageInfo>(ri, "inlineImageInfo")?.ImageDictionary;
@@ -389,7 +410,7 @@ namespace WebLib {
 						else Utils.Log(ex);
 				}
 			}
-			public void ModifyPath(PathConstructionRenderInfo ri) {
+			public override void ModifyPath(PathConstructionRenderInfo ri) {
 				if (!fTxt) return;
 				var pos = ri.SegmentData?.ToList();
 				if (ri.Operation == PathConstructionRenderInfo.MOVETO)
@@ -410,7 +431,7 @@ namespace WebLib {
 			//https://stackoverflow.com/questions/51953098/itextsharp-get-reference-to-a-graphic-markup
 			//https://stackoverflow.com/questions/44867468/itextsharp-how-to-find-the-fill-color-of-a-rectangle
 			//http://www.java2s.com/example/java-src/pkg/mkl/testarea/itext5/pdfcleanup/pdfcleanuprenderlistener-3b7d7.html
-			public iTextSharp.text.pdf.parser.Path RenderPath(PathPaintingRenderInfo ri) {
+			public override iTextSharp.text.pdf.parser.Path RenderPath(PathPaintingRenderInfo ri) {
 				if (path.Subpaths.Count() == 0) // !fTxt || 
 					return null;
 				var gs = Utils.GetPrivVal<GraphicsState>(ri, "gs");
@@ -445,7 +466,7 @@ namespace WebLib {
 				path.Subpaths.Clear();
 				return path;
 			}
-			public void ClipPath(int rule) {
+			public override void ClipPath(int rule) {
 				// TODO : g.Clip = ...
 				path.Subpaths.Clear();
 			}
@@ -462,7 +483,7 @@ namespace WebLib {
 			if (obj == null) return "<null>";
 			if (obj is PdfArray a)
 				return "PdfArray(" + a.Size + ") ["
-					+ a.GetString(x => DumpPdfObj(PdfReader.GetPdfObject(x)), "; ") + "], ";
+					+ a.Take(10).GetString(x => DumpPdfObj(PdfReader.GetPdfObject(x)), "; ") + "], ";
 			if (obj is PdfDictionary d)
 				return "PdfDictionary [" + d.Keys.GetString(x => x.ToString() + "="
 								+ DumpPdfObj(PdfReader.GetPdfObject(d.Get(x))), "; ") + "], ";
@@ -597,16 +618,13 @@ namespace WebLib {
 					}
 				}
 			}
-			class ImgRendListener : IRenderListener {
+			class ImgRendListener : PdfRenderer {
 				internal HashSet<PdfDictionary> procImg = new HashSet<PdfDictionary>();
 				internal PdfContentByte Canvas = null;
 				internal int	pgWidth;
 				internal bool	mod = false;
-
-				public void BeginTextBlock() { }
-				public void EndTextBlock() { }
-				public void RenderText(TextRenderInfo ri) { }
-				public void RenderImage(ImageRenderInfo ri) {
+				internal PdfStamper stmp = null;
+				public override void RenderImage(ImageRenderInfo ri) {
 					try {
 						var dict = PdfReader.GetPdfObject(ri.GetRef()) as PdfDictionary;
 						// ?? Utils.GetPrivVal<InlineImageInfo>(ri, "inlineImageInfo")?.ImageDictionary;
@@ -655,18 +673,31 @@ namespace WebLib {
 						if (newBytes == null || newBytes.Length > oldLen * 0.8)
 							return;
 						var imgZip = iTextSharp.text.Image.GetInstance(newBytes);
-						if (isMask) imgZip.MakeMask();
-						PdfImage nImg = new PdfImage(imgZip, null, null);
-						if (nImg.GetBytes() == null)            // why ????
-							return;
-						dict.Keys.ToArray().ForEach(x => dict.Remove(x));
-						nImg.Keys.ForEach(x => dict.Put(x, nImg.Get(x)));
-						(dict as PRStream).SetDataRaw(nImg.GetBytes());
+						if (isMask) 
+							imgZip.MakeMask();
+						var sMask = dict.GetDirectObject(PdfName.SMASK) as PdfDictionary;
+						if (imgZip.ImageMask == null) sMask = null;
+						if (MakeImg(dict, sMask, imgZip) == null)		// somehow transp mask is 
+							return;                                     // created but ref to it 
+						if (sMask != null)  // is not in the dict
+							MakeImg(sMask, null, imgZip.ImageMask);		// adding it manually
 						mod = true;
 					}
 					catch (Exception ex) {
 						Utils.Log(ex);
 						return;
+					}
+					PdfDictionary MakeImg(PdfDictionary dct, PdfDictionary msk, iTextSharp.text.Image img) {
+						PdfImage ret = new PdfImage(img, null, null);
+						var bb = ret.GetBytes()
+							?? Utils.GetPrivVal<MemoryStream>(ret, "streamBytes")?.GetBytes();
+						if (bb == null)            // why ????
+							return null;
+						dct.Keys.Where(x => msk == null || !x.Equals(PdfName.SMASK))
+								.ToArray().ForEach(x => dct.Remove(x));
+						ret.Keys.ForEach(x => dct.Put(x, ret.Get(x)));
+						(dct as PRStream).SetDataRaw(bb);
+						return dct;
 					}
 				}
 			}
@@ -704,7 +735,7 @@ namespace WebLib {
 			// unfortunately we need this second pass, since it goes over all the pages
 			//https://psycodedeveloper.wordpress.com/2013/01/10/how-to-extract-images-from-pdf-files-using-c-and-itextsharp/
 			bool AdjustFonts(PdfStamper stmp) {
-				ImgRendListener lstnr = new ImgRendListener { };
+				ImgRendListener lstnr = new ImgRendListener { stmp = stmp };
 				PdfContentStreamProcessor imgProc = new PdfContentStreamProcessor(lstnr);
 				PdfContentStreamProcessor txtProc = new PdfContentStreamProcessor(lstnr);
 				foreach (var x in txtProc.RegisteredOperatorStrings) {
@@ -755,80 +786,69 @@ namespace WebLib {
 				return lstnr.mod;
 			}
 			//https://github.com/QuestPDF/QuestPDF/issues/31
-			PdfName MapFontName(PdfDictionary dct, PdfName fnt) {           // map font name to one of the internals
-				string nmFnt = fnt.ToString();
-				if (iTextSharp.text.FontFactory.IsRegistered(nmFnt))
-					return null;
-				var parts = nmFnt.Split(new char[] { '+' });				// we only remove TTF fonts
-				if (dct.GetAsName(PdfName.SUBTYPE) == PdfName.TRUETYPE
-				&& dct.GetAsName(PdfName.ENCODING) != null
-				&& parts.Length > 1 && parts[0].Length > 5 && parts[1].Length > 4)
-					return new PdfName(parts[1]);
-				PdfDictionary dsc = dct.GetAsDict(PdfName.FONTDESCRIPTOR);
-				int flg = (dsc == null) ? 0 : dsc.GetAsNumber(PdfName.FLAGS).GetInt();
-				bool fs = (flg & 0x00002) != 0 || nmFnt.Contains("Times"),	// sarif
-					ff = (flg & 0x00001) != 0 || nmFnt.Contains("Courier"), // fixed
-					fi = (flg & 0x00040) != 0 || nmFnt.Contains("Italic"),  // italic
-					fb = (flg & 0x40000) != 0 || nmFnt.Contains("Bold");    // bold
-				if (fi && !ff && fs)                                        // sarif & italic & not fixed
-					return new PdfName(fb ? BaseFont.TIMES_BOLDITALIC : BaseFont.TIMES_ITALIC);
-				if (fb)                                                     // bold
-					return new PdfName(ff ? BaseFont.COURIER_BOLD : (fs ? BaseFont.TIMES_BOLD : BaseFont.HELVETICA_BOLD));
-				return new PdfName(ff ? BaseFont.COURIER : (fs ? BaseFont.TIMES_ROMAN : BaseFont.HELVETICA));
-			}
+			static string[][] baseFonts = new string[][] {
+					new string[] { "Helvetica", "Helvetica-Bold", "Helvetica-Oblique", "Helvetica-BoldOblique" },
+					new string[] { "Times-Roman", "Times-Bold", "Times-Italic", "Times-BoldItalic" },
+					new string[] { "Courier", "Courier-Bold", "Courier-Oblique", "Courier-BoldOblique" },
+					new string[] { "Symbol", "Symbol", "Symbol", "Symbol" },
+					new string[] { "ZapfDingbats","ZapfDingbats","ZapfDingbats","ZapfDingbats" }
+				};
 			bool ChkFont(PdfDictionary dct, PdfDictionary par, int refIdx) {
 				if (dct == null || !dct.IsFont()) return false;
-				PdfDictionary dsc = dct.GetAsDict(PdfName.FONTDESCRIPTOR);
-				PdfDictionary ch0 = GetDict0(dct, PdfName.DESCENDANTFONTS);
-				if (ch0 == null && (dsc == null || dsc.Get(PdfName.FONTFILE2) == null))
+				PdfDictionary fd = GetDict0(dct, PdfName.DESCENDANTFONTS)?.GetAsDict(PdfName.FONTDESCRIPTOR);
+				PdfDictionary dsc = fd ?? dct.GetAsDict(PdfName.FONTDESCRIPTOR);
+				if ((dsc?.Get(PdfName.FONTFILE2) ?? dsc?.Get(PdfName.FONTFILE3)) == null)
+					return false;           // base font or no font glyphs - nothing to optimize...
+				var fact = iTextSharp.text.FontFactory.FontImp;
+				CMapAwareDocumentFont cf = new CMapAwareDocumentFont(dct);
+				string orgFont = dct.GetAsName(PdfName.BASEFONT).ToString().Substring(1);
+				BaseFont nf = null;
+				if (orgFont.Length > 8 && orgFont[6] == '+'
+				&& !baseFonts.SelectMany(x=>x).Any(x => x == orgFont)) {
+					if (fact.RegisteredFonts.Count() == 14)					// orig only 14 base fonts
+						iTextSharp.text.FontFactory.RegisterDirectories();	// load windows fonts
+					string res = "";										// try to match pdf->win
+					Regex.Replace(orgFont.Substring(7).Replace(',', ' '), "([A-Z])", " $1")
+						.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)									
+						.ForEach(x => res += (res.Length > 0 && res.LastOrDefault() != '-' && x.Length > 1 ? " " : "") + x);
+					nf = fact.GetFont(res).BaseFont;
+				}
+				if (nf == null) {											// can't match to windows
+					int flg = (dsc == null) ? 0 : dsc.GetAsNumber(PdfName.FLAGS).GetInt();
+					bool ff = (flg & 0x00001) != 0 || orgFont.Contains("Courier"),	// fixed
+						fs = (flg & 0x00002) != 0 || orgFont.Contains("Times"),		// sarif
+						fz = (flg & 0x00004) != 0;									// Symbolic
+					int fi = ((flg & 0x00040) != 0 || orgFont.Contains("Italic")) ? 2 : 0,
+						fb = ((flg & 0x40000) != 0 || orgFont.Contains("Bold")) ? 1 : 0;
+					var fam = baseFonts[ff ? 2 : fs ? 1 : 0][fb + fi];		// replace with base fonts
+					nf = fact.GetFont(fam).BaseFont;						// based on FontDescr.Flags
+					//Console.WriteLine("Base:" + orgFont);
+				}
+				if (nf == null) {
+					//Console.WriteLine("Not found:" + orgFont);
 					return false;
-				PdfName font = dct.GetAsName(PdfName.BASEFONT),
-						mFnt = MapFontName(ch0 ?? dct, font);
-				if (mFnt == null) return false;
-				String msg = "\t" + dct.Get(PdfName.NAME).GetString() + " - " + font.ToString() + " ";
-				msg += "Subtype: " + dct.GetAsName(PdfName.SUBTYPE).ToString() + "; ";
-				msg += "Kids: " + (ch0 == null ? 0 : 1) + "; ";
-				msg += (dsc ?? new PdfDictionary()).Get(PdfName.FONTFILE2) == null ? "" : "FontFile2; ";
-				PdfDictionary fd = ch0?.GetAsDict(PdfName.FONTDESCRIPTOR);
-				if (ch0 != null) {			// convert descendantFonts to descriptor
-					//Console.WriteLine(msg + " map to " + mFnt.ToString() + " ***** Deleting FONTFILE2");
-					if (fd != null && dsc == null) {
-						dsc = new PdfDictionary(PdfName.FONTDESCRIPTOR);
-						dsc.PutAll(fd);
-						dct.Put(PdfName.FONTDESCRIPTOR, dsc);
-					}
-					if (dsc != null) {
-						dct.Remove(PdfName.DESCENDANTFONTS);
-						ch0 = null;
-					}
 				}
-				if (ch0 != null) {
-					ch0.Put(PdfName.BASEFONT, mFnt);
-					ch0.Put(PdfName.SUBTYPE, PdfName.TRUETYPE);
-					ch0.Put(PdfName.ENCODING, PdfName.WIN_ANSI_ENCODING);
-					if (fd != null) {
-						fd.Remove(PdfName.FONTFILE2);
-						fd.Remove(PdfName.FONTBBOX);
-						fd.Put(PdfName.FONTNAME, mFnt);
-					}
-					return true;
-				}
-				if (PdfName.TRUETYPE.Equals(dct.GetAsName(PdfName.SUBTYPE)) || dsc != null) {
-					//Console.WriteLine(msg + " map to " + mFnt.ToString() + " ***** Deleting FONTFILE2");
-					dct.Put(PdfName.BASEFONT, mFnt);
-					dct.Put(PdfName.SUBTYPE, PdfName.TRUETYPE);
-					dct.Put(PdfName.ENCODING, PdfName.WIN_ANSI_ENCODING);
-					if (dsc != null) {
-						dsc.Put(PdfName.FONTNAME, mFnt);      // replace the fontname 
-						dsc.Remove(PdfName.FONTFILE2);        // remove the font file
-						if (dsc.Get(new PdfName("MissingWidth")) != null)
-							dct.Remove(PdfName.WIDTHS);
-						//dsc.Remove(PdfName.FONTBBOX);
-					}
-					return true;
-				}
-				//Console.WriteLine(msg);
-				return false;
+				int[] widths = nf.Widths.ToArray();							// load widths 
+				Enumerable.Range(0, 255)									// and override from Dict
+					.Select(x => new { c = cf.Decode(new byte[] { (byte)x }, 0, 1), w = cf.GetWidth(x) })
+					.Where(x => x.c != "" && x.w != 0 && x.c[0] < 256).ForEach(x => widths[x.c[0]] = x.w);
+				PdfDictionary ndsc = new PdfDictionary();
+				ndsc.PutAll(dsc);											// copy orig descriptor
+				dct.Remove(PdfName.DESCENDANTFONTS);						// to a new one
+				dct.Remove(PdfName.FONTDESCRIPTOR);							// and clean all the 
+				dct.Remove(PdfName.TOUNICODE);								// font stuff. Add basic
+				dct.Put(PdfName.BASEFONT,		new PdfName(nf.PostscriptFontName));
+				dct.Put(PdfName.SUBTYPE,		PdfName.TRUETYPE);
+				dct.Put(PdfName.ENCODING,		PdfName.WIN_ANSI_ENCODING);
+				dct.Put(PdfName.WIDTHS,			new PdfArray(widths));
+				dct.Put(PdfName.FIRSTCHAR,		new PdfNumber(0));
+				dct.Put(PdfName.LASTCHAR,		new PdfNumber(255));
+				dct.Put(PdfName.FONTDESCRIPTOR, ndsc);
+				ndsc.Remove(PdfName.FONTFILE2);								// most important 
+				ndsc.Remove(PdfName.FONTFILE3);								// make sure gliphs are gone
+				ndsc.Put(PdfName.FONTNAME, new PdfName(nf.PostscriptFontName));
+				ndsc.Put(new PdfName("MissingWidth"), new PdfNumber(widths.Where(x => x != 0).Average()));
+				return true;
 			}
 		}
 
